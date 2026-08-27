@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Building2,
@@ -13,8 +14,10 @@ import {
   Gauge,
   KeyRound,
   Languages,
+  LoaderCircle,
   MapPin,
   Navigation,
+  Phone,
   Route,
   Search,
   ShieldCheck,
@@ -25,6 +28,15 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -34,11 +46,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  addBookingDays,
+  CATEGORY_DAILY_RATES,
+  riyadhDateToday,
+  type BookingCity,
+  type BookingLocale,
+  type PickupMode,
+  type VehicleCategory,
+} from "@/lib/booking";
 import { cn } from "@/lib/utils";
 
-type Locale = "ar" | "en";
-type PickupMode = "branch" | "delivery" | "taxi";
-type CityKey = "riyadh" | "jeddah" | "dammam" | "makkah" | "madinah";
+type Locale = BookingLocale;
+type CityKey = BookingCity;
+type BookingSubmitState = "idle" | "submitting" | "success" | "error";
 
 const content = {
   ar: {
@@ -100,6 +121,24 @@ const content = {
     heroAlt: "مركبة حديثة على طريق في الرياض وقت الشروق",
     languageLabel: "English",
     mainNav: "التنقل الرئيسي",
+    booking: {
+      title: "أكمل طلب الحجز",
+      description: "أدخل بيانات التواصل وسيراجع فريق سيّار التوفر مع شركة التأجير.",
+      selectedCategory: "الفئة المختارة",
+      firstName: "الاسم الأول",
+      lastName: "اسم العائلة",
+      mobile: "رقم الجوال السعودي",
+      mobileHint: "مثال: 05XXXXXXXX",
+      submit: "إرسال طلب الحجز",
+      submitting: "جارٍ حفظ الطلب...",
+      preliminary: "هذا طلب مبدئي للتحقق من التوفر، ولا يتضمن دفعًا أو عقد إيجار.",
+      error: "تعذر حفظ الطلب الآن. تحقق من البيانات وحاول مرة أخرى.",
+      successTitle: "تم استلام طلبك",
+      successText: "سنراجع التوفر ونتواصل معك لإكمال الحجز.",
+      reference: "رقم الطلب",
+      status: "قيد التحقق من التوفر",
+      close: "إغلاق",
+    },
   },
   en: {
     brand: "Sayyar",
@@ -160,15 +199,33 @@ const content = {
     heroAlt: "A modern vehicle driving through Riyadh at sunrise",
     languageLabel: "العربية",
     mainNav: "Main navigation",
+    booking: {
+      title: "Complete your booking request",
+      description: "Add your contact details and Sayyar will verify availability with the rental company.",
+      selectedCategory: "Selected category",
+      firstName: "First name",
+      lastName: "Last name",
+      mobile: "Saudi mobile number",
+      mobileHint: "Example: 05XXXXXXXX",
+      submit: "Send booking request",
+      submitting: "Saving your request...",
+      preliminary: "This is a preliminary availability request. No payment or rental agreement is created yet.",
+      error: "We could not save the request. Check your details and try again.",
+      successTitle: "Request received",
+      successText: "We will verify availability and contact you to complete the booking.",
+      reference: "Request reference",
+      status: "Availability check pending",
+      close: "Close",
+    },
   },
 } as const;
 
 const cityKeys: CityKey[] = ["riyadh", "jeddah", "dammam", "makkah", "madinah"];
 
 const categoryData = [
-  { key: "economy", price: 128, seats: 5, bags: 2, tone: "from-amber-50 to-stone-100" },
-  { key: "compact", price: 164, seats: 5, bags: 3, tone: "from-emerald-50 to-stone-100" },
-  { key: "family", price: 238, seats: 7, bags: 4, tone: "from-slate-100 to-stone-200" },
+  { key: "economy", price: CATEGORY_DAILY_RATES.economy, seats: 5, bags: 2, tone: "from-amber-50 to-stone-100" },
+  { key: "compact", price: CATEGORY_DAILY_RATES.compact, seats: 5, bags: 3, tone: "from-emerald-50 to-stone-100" },
+  { key: "family", price: CATEGORY_DAILY_RATES.family, seats: 7, bags: 4, tone: "from-slate-100 to-stone-200" },
 ] as const;
 
 const modeIcons = {
@@ -177,20 +234,8 @@ const modeIcons = {
   taxi: Navigation,
 } as const;
 
-function riyadhToday() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Riyadh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
-function addDays(dateValue: string, days: number) {
-  const [year, month, day] = dateValue.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
+function createIdempotencyKey() {
+  return globalThis.crypto.randomUUID().replaceAll("-", "");
 }
 
 export default function Home() {
@@ -198,17 +243,25 @@ export default function Home() {
   const [pickupMode, setPickupMode] = useState<PickupMode>("branch");
   const [pickupCity, setPickupCity] = useState<CityKey>("riyadh");
   const [returnCity, setReturnCity] = useState<CityKey>("riyadh");
-  const [pickupDate, setPickupDate] = useState(riyadhToday);
+  const [pickupDate, setPickupDate] = useState(riyadhDateToday);
   const [days, setDays] = useState(1);
   const [pickupTime, setPickupTime] = useState("10:00");
   const [differentCity, setDifferentCity] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<VehicleCategory | null>(null);
+  const [bookingOpen, setBookingOpen] = useState(false);
+  const [bookingSubmitState, setBookingSubmitState] = useState<BookingSubmitState>("idle");
+  const [bookingReference, setBookingReference] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState("");
+  const [customerFirstName, setCustomerFirstName] = useState("");
+  const [customerLastName, setCustomerLastName] = useState("");
+  const [customerMobile, setCustomerMobile] = useState("");
 
   const copy = content[locale];
   const isArabic = locale === "ar";
-  const returnDate = useMemo(() => addDays(pickupDate, days), [pickupDate, days]);
+  const returnDate = useMemo(() => addBookingDays(pickupDate, days), [pickupDate, days]);
   const effectiveReturnCity = differentCity ? returnCity : pickupCity;
+  const selectedCategoryData = categoryData.find((category) => category.key === selectedCategory);
   const ArrowIcon = isArabic ? ChevronLeft : ChevronRight;
 
   useEffect(() => {
@@ -220,12 +273,59 @@ export default function Home() {
     event.preventDefault();
     setSubmitted(true);
     setSelectedCategory(null);
+    setBookingOpen(false);
+    setBookingSubmitState("idle");
     window.setTimeout(() => {
       document.getElementById("search-results")?.scrollIntoView({
         behavior: "smooth",
         block: "start",
       });
     }, 80);
+  }
+
+  function handleCategorySelection(category: VehicleCategory) {
+    setSelectedCategory(category);
+    setIdempotencyKey(createIdempotencyKey());
+    setBookingReference("");
+    setBookingSubmitState("idle");
+    setBookingOpen(true);
+  }
+
+  async function handleBookingSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCategory) return;
+
+    setBookingSubmitState("submitting");
+    try {
+      const requestKey = idempotencyKey || createIdempotencyKey();
+      if (!idempotencyKey) setIdempotencyKey(requestKey);
+
+      const response = await fetch("/api/booking-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey: requestKey,
+          customerFirstName,
+          customerLastName,
+          customerMobile,
+          pickupMode,
+          pickupCity,
+          returnCity: effectiveReturnCity,
+          pickupDate,
+          pickupTime,
+          days,
+          vehicleCategory: selectedCategory,
+          locale,
+        }),
+      });
+      const result = (await response.json()) as { reference?: string };
+      if (!response.ok || !result.reference) throw new Error("booking request failed");
+
+      setBookingReference(result.reference);
+      setBookingSubmitState("success");
+    } catch {
+      setBookingSubmitState("error");
+    }
   }
 
   return (
@@ -274,10 +374,13 @@ export default function Home() {
       </header>
 
       <section id="top" className="relative isolate min-h-[720px] overflow-hidden bg-[#0a423b] lg:min-h-[690px]">
-        {/* eslint-disable-next-line @next/next/no-img-element -- Vinext serves this static hero directly without Next's image optimizer. */}
-        <img
+        <Image
           src="/sayyar-hero.png"
           alt={copy.heroAlt}
+          fill
+          priority
+          unoptimized
+          sizes="100vw"
           className="absolute inset-0 h-full w-full object-cover object-[42%_center]"
         />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(4,37,34,0.04)_0%,rgba(4,37,34,0.3)_42%,rgba(4,37,34,0.94)_100%)]" />
@@ -387,7 +490,7 @@ export default function Home() {
                     <Input
                       required
                       type="date"
-                      min={riyadhToday()}
+                      min={riyadhDateToday()}
                       value={pickupDate}
                       onChange={(event) => setPickupDate(event.target.value)}
                       className="h-11 rounded-xl border-[#d9e0dc] bg-[#fbfcfb] text-[#173d38] shadow-none focus-visible:ring-[#0c5b50]/20"
@@ -566,7 +669,7 @@ export default function Home() {
                         </div>
                         <Button
                           type="button"
-                          onClick={() => setSelectedCategory(category.key)}
+                          onClick={() => handleCategorySelection(category.key)}
                           variant={selected ? "secondary" : "default"}
                           className={cn(
                             "rounded-xl px-4 font-extrabold",
@@ -587,6 +690,138 @@ export default function Home() {
           </div>
         </section>
       )}
+
+      <Dialog open={bookingOpen} onOpenChange={setBookingOpen}>
+        <DialogContent
+          dir={isArabic ? "rtl" : "ltr"}
+          lang={locale}
+          className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-[24px] border-[#d9dfdb] bg-[#fffdf9] p-5 text-[#173d38] sm:max-w-xl sm:p-6"
+        >
+          {bookingSubmitState === "success" ? (
+            <div className="py-3 text-center" aria-live="polite">
+              <span className="mx-auto grid size-14 place-items-center rounded-full bg-[#e3f1ec] text-[#0c5b50]">
+                <Check className="size-7" aria-hidden="true" />
+              </span>
+              <DialogHeader className="mt-4 items-center text-center sm:text-center">
+                <DialogTitle className="text-2xl font-black text-[#123a35]">
+                  {copy.booking.successTitle}
+                </DialogTitle>
+                <DialogDescription className="max-w-md leading-6 text-[#667d78]">
+                  {copy.booking.successText}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="mt-5 rounded-2xl border border-[#dbe5e1] bg-[#eff6f3] p-4">
+                <p className="text-xs font-bold text-[#64807a]">{copy.booking.reference}</p>
+                <p className="mt-1 font-mono text-lg font-black tracking-wide text-[#0c5b50]" dir="ltr">
+                  {bookingReference}
+                </p>
+                <p className="mt-2 text-xs font-bold text-[#ad7020]">{copy.booking.status}</p>
+              </div>
+              <DialogFooter className="mt-5 sm:justify-center">
+                <DialogClose asChild>
+                  <Button type="button" className="rounded-xl bg-[#0c5b50] px-8 text-white hover:bg-[#094c43]">
+                    {copy.booking.close}
+                  </Button>
+                </DialogClose>
+              </DialogFooter>
+            </div>
+          ) : (
+            <form onSubmit={handleBookingSubmit}>
+              <DialogHeader className={isArabic ? "text-right sm:text-right" : "text-left sm:text-left"}>
+                <DialogTitle className="text-2xl font-black text-[#123a35]">
+                  {copy.booking.title}
+                </DialogTitle>
+                <DialogDescription className="leading-6 text-[#667d78]">
+                  {copy.booking.description}
+                </DialogDescription>
+              </DialogHeader>
+
+              {selectedCategoryData && (
+                <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-[#dbe5e1] bg-[#eff6f3] p-3.5">
+                  <div>
+                    <p className="text-[11px] font-bold text-[#6b817c]">{copy.booking.selectedCategory}</p>
+                    <p className="mt-0.5 font-black text-[#173d38]">
+                      {copy.categories[selectedCategoryData.key].name}
+                    </p>
+                  </div>
+                  <p className="text-lg font-black text-[#0c5b50]">
+                    <bdi>{selectedCategoryData.price * days}</bdi> <span className="text-xs">SAR</span>
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label>
+                  <span className="mb-1.5 block text-xs font-bold text-[#355a55]">{copy.booking.firstName}</span>
+                  <Input
+                    required
+                    autoComplete="given-name"
+                    minLength={2}
+                    maxLength={60}
+                    value={customerFirstName}
+                    onChange={(event) => setCustomerFirstName(event.target.value)}
+                    className="h-11 rounded-xl border-[#d9e0dc] bg-white shadow-none focus-visible:ring-[#0c5b50]/20"
+                  />
+                </label>
+                <label>
+                  <span className="mb-1.5 block text-xs font-bold text-[#355a55]">{copy.booking.lastName}</span>
+                  <Input
+                    required
+                    autoComplete="family-name"
+                    minLength={2}
+                    maxLength={60}
+                    value={customerLastName}
+                    onChange={(event) => setCustomerLastName(event.target.value)}
+                    className="h-11 rounded-xl border-[#d9e0dc] bg-white shadow-none focus-visible:ring-[#0c5b50]/20"
+                  />
+                </label>
+                <label className="sm:col-span-2">
+                  <span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-[#355a55]">
+                    <Phone className="size-3.5 text-[#bc7c25]" aria-hidden="true" />
+                    {copy.booking.mobile}
+                  </span>
+                  <Input
+                    required
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    dir="ltr"
+                    pattern="(?:\+?966|00966|966|0)?5[0-9]{8}"
+                    placeholder={copy.booking.mobileHint}
+                    value={customerMobile}
+                    onChange={(event) => setCustomerMobile(event.target.value)}
+                    className="h-11 rounded-xl border-[#d9e0dc] bg-white text-left shadow-none focus-visible:ring-[#0c5b50]/20"
+                  />
+                </label>
+              </div>
+
+              <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-900">
+                {copy.booking.preliminary}
+              </p>
+              {bookingSubmitState === "error" && (
+                <p className="mt-3 text-sm font-semibold text-red-700" role="alert">
+                  {copy.booking.error}
+                </p>
+              )}
+
+              <DialogFooter className="mt-5">
+                <Button
+                  type="submit"
+                  disabled={bookingSubmitState === "submitting"}
+                  className="h-11 rounded-xl bg-[#0c5b50] px-6 font-extrabold text-white hover:bg-[#094c43] disabled:opacity-70"
+                >
+                  {bookingSubmitState === "submitting" ? (
+                    <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <CarFront className="size-4" aria-hidden="true" />
+                  )}
+                  {bookingSubmitState === "submitting" ? copy.booking.submitting : copy.booking.submit}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <footer className="border-t border-[#dcdad2] bg-[#eeece5] px-4 py-6 text-center text-xs text-[#667a75] sm:px-6">
         <p>© {new Date().getFullYear()} {copy.brand} · {copy.intermediary}</p>
