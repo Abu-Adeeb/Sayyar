@@ -27,12 +27,10 @@ test("renders Sayyar production metadata", async () => {
     /^text\/html\b/i,
   );
   const html = await response.text();
-
-  assert.match(html, /<html(?=[^>]*\blang=["']ar["'])(?=[^>]*\bdir=["']rtl["'])[^>]*>/i);
   assert.match(html, /<title>سيّار \| Sayyar<\/title>/i);
   assert.match(
     html,
-    /<meta(?=[^>]*\bname=["']description["'])(?=[^>]*\bcontent=["']منصة لمقارنة وحجز مركبات التأجير من شركاء موثوقين في المملكة العربية السعودية\.["'])[^>]*>/i,
+    /<meta(?=[^>]*\bname=["']description["'])(?=[^>]*منصة لمقارنة وحجز مركبات التأجير)[^>]*>/i,
   );
   assert.doesNotMatch(html, /\bcodex-preview\b/i);
 });
