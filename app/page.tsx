@@ -354,12 +354,14 @@ export default function Home() {
               <span className="hidden sm:inline">{copy.languageLabel}</span>
             </Button>
             <Button
-              type="button"
+              asChild
               variant="ghost"
               className="hidden h-10 rounded-xl px-4 text-[#27564f] hover:bg-[#e9f0ed] lg:inline-flex"
             >
-              <Building2 className="size-4" />
-              {copy.partnerPortal}
+              <a href="/partners">
+                <Building2 className="size-4" />
+                {copy.partnerPortal}
+              </a>
             </Button>
             <Button
               type="button"
